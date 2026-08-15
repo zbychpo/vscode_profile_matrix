@@ -78,7 +78,7 @@ class MatrixViewProvider {
                 webviewView.webview.postMessage({ type: 'data', data: this.toWebviewMatrix(this.lastMatrix) });
             }
             if (message.type === 'switchProfile') {
-                await this.switchProfile(message.profileName);
+                await this.switchProfile();
             }
         });
         void this.refresh();
@@ -128,14 +128,14 @@ class MatrixViewProvider {
             vscode.window.showErrorMessage(`拡張機能を更新できませんでした: ${detail}`);
         }
     }
-    async switchProfile(profileName) {
+    async switchProfile() {
         try {
-            await vscode.commands.executeCommand('workbench.action.openProfile', profileName);
+            await vscode.commands.executeCommand('workbench.profiles.actions.switchProfile');
             await this.refresh();
         }
         catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(`プロファイル「${profileName}」に切り替えられませんでした: ${detail}`);
+            vscode.window.showErrorMessage(`プロファイルを切り替えられませんでした: ${detail}`);
         }
     }
     async toggleExtension(message) {
@@ -175,7 +175,6 @@ async function loadMatrix() {
             extensions: await readDefaultExtensions()
         };
         const profiles = [defaultProfile, ...customProfiles];
-        const currentProfile = await getCurrentProfile(profiles);
         const extensions = new Map();
         for (const profile of profiles) {
             for (const extension of profile.extensions) {
@@ -195,35 +194,13 @@ async function loadMatrix() {
         await applyUpdateInfo(extensionList);
         return {
             profiles: profiles.map(({ id, name, cliName }) => ({ id, name, cliName })).sort((left, right) => left.name.localeCompare(right.name)),
-            extensions: extensionList.sort((left, right) => left.displayName.localeCompare(right.displayName, 'ja')),
-            currentProfile
+            extensions: extensionList.sort((left, right) => left.displayName.localeCompare(right.displayName, 'ja'))
         };
     }
     catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         return { profiles: [], extensions: [], error: `プロファイル情報を読み取れませんでした: ${detail}` };
     }
-}
-async function getCurrentProfile(profiles) {
-    try {
-        const current = await vscode.commands.executeCommand('workbench.profiles.getCurrentProfile');
-        if (current && typeof current === 'object') {
-            const record = current;
-            const id = typeof record.id === 'string' ? record.id : undefined;
-            const name = typeof record.name === 'string' ? record.name : undefined;
-            const match = profiles.find((profile) => (id && profile.id === id) || (name && profile.name === name));
-            if (match) {
-                return { id: match.id, name: match.name };
-            }
-        }
-    }
-    catch {
-        // The current-profile command is internal and may not exist in every VS Code build.
-    }
-    const profileArgumentIndex = process.argv.indexOf('--profile');
-    const profileArgument = profileArgumentIndex >= 0 ? process.argv[profileArgumentIndex + 1] : undefined;
-    const profile = profiles.find((item) => item.cliName === profileArgument || item.name === profileArgument);
-    return profile ? { id: profile.id, name: profile.name } : { id: defaultProfileId, name: defaultProfileName };
 }
 async function applyUpdateInfo(extensions) {
     if (!extensions.length) {
@@ -503,9 +480,8 @@ function getWebviewHtml(webview) {
     :root { color: var(--vscode-foreground); font-family: var(--vscode-font-family); }
     body { margin: 0; padding: 12px; background: var(--vscode-sideBar-background); }
     .toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
-    .profile-toolbar { align-items: center; display: flex; gap: 8px; margin-bottom: 10px; }
-    .current-profile { color: var(--vscode-descriptionForeground); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    select { max-width: 220px; min-width: 140px; padding: 5px 8px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border); }
+    .profile-header { background: transparent; color: var(--vscode-foreground); display: block; padding: 0; text-align: center; width: 100%; }
+    .profile-header:hover { background: transparent; color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
     input { flex: 1; min-width: 0; padding: 6px 8px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
     button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; padding: 6px 9px; cursor: pointer; }
     button:hover { background: var(--vscode-button-hoverBackground); }
@@ -539,22 +515,13 @@ function getWebviewHtml(webview) {
 </head>
 <body>
   <div class="toolbar"><input id="search" type="search" placeholder="拡張機能を検索"><button id="refresh" title="更新">更新</button></div>
-    <div class="profile-toolbar"><span id="current-profile" class="current-profile">現在のプロファイル: 読み込み中...</span><select id="profile-select" title="プロファイルを切り替え"><option value="">プロファイルを切り替え...</option></select></div>
   <div id="content" class="message">読み込み中...</div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     let matrix = { profiles: [], extensions: [] };
     const content = document.getElementById('content');
     const search = document.getElementById('search');
-        const currentProfile = document.getElementById('current-profile');
-        const profileSelect = document.getElementById('profile-select');
     document.getElementById('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
-        profileSelect.addEventListener('change', () => {
-            if (profileSelect.value) {
-                vscode.postMessage({ type: 'switchProfile', profileName: profileSelect.value });
-                profileSelect.value = '';
-            }
-        });
     search.addEventListener('input', render);
     window.addEventListener('message', (event) => {
       if (event.data.type === 'data') { matrix = event.data.data; render(); }
@@ -564,14 +531,12 @@ function getWebviewHtml(webview) {
       return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
     }
     function render() {
-            currentProfile.textContent = '現在のプロファイル: ' + (matrix.currentProfile?.name || '判定できません');
-            profileSelect.innerHTML = '<option value="">プロファイルを切り替え...</option>' + matrix.profiles.map((profile) => '<option value="' + escapeHtml(profile.name) + '">' + escapeHtml(profile.name) + '</option>').join('');
       if (matrix.error) { content.innerHTML = '<p class="message error">' + escapeHtml(matrix.error) + '</p>'; return; }
       if (!matrix.profiles.length) { content.innerHTML = '<p class="message">カスタムプロファイルが見つかりません。</p>'; return; }
       const query = search.value.trim().toLowerCase();
     const extensions = matrix.extensions.filter((extension) => (extension.id + ' ' + extension.displayName).toLowerCase().includes(query));
     const columns = '<col style="width: 280px">' + matrix.profiles.map(() => '<col style="width: 132px">').join('');
-    const header = matrix.profiles.map((profile) => '<th title="' + escapeHtml(profile.name) + '">' + escapeHtml(profile.name) + '</th>').join('');
+    const header = matrix.profiles.map((profile) => '<th title="' + escapeHtml(profile.name) + '"><button class="profile-header" data-switch-profile="' + escapeHtml(profile.name) + '">' + escapeHtml(profile.name) + '</button></th>').join('');
       const rows = extensions.map((extension) => {
         const cells = matrix.profiles.map((profile) => {
           const enabled = extension.profileIds.includes(profile.id);
@@ -599,7 +564,10 @@ function getWebviewHtml(webview) {
         const nameClass = extension.deprecated ? 'extension-link deprecated' : 'extension-link';
         return '<tr><td title="' + escapeHtml(extension.id) + '"><div class="extension-row">' + icon + '<div class="extension-details"><button class="' + nameClass + '" data-open-extension="' + escapeHtml(extension.id) + '">' + escapeHtml(extension.displayName) + '</button>' + deprecatedBadge + description + '<span class="extension-meta">' + meta + updateButton + '</span></div></div></td>' + cells + '</tr>';
       }).join('');
-            content.innerHTML = '<div class="matrix"><table><colgroup>' + columns + '</colgroup><thead><tr><th>Extension</th>' + header + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+                        content.innerHTML = '<div class="matrix"><table><colgroup>' + columns + '</colgroup><thead><tr><th>Extension</th>' + header + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+            content.querySelectorAll('[data-switch-profile]').forEach((button) => button.addEventListener('click', () => {
+                vscode.postMessage({ type: 'switchProfile', profileName: button.dataset.switchProfile });
+            }));
       content.querySelectorAll('.cell').forEach((button) => button.addEventListener('click', () => {
         const profile = matrix.profiles.find((item) => item.id === button.dataset.profileId);
         if (profile) vscode.postMessage({ type: 'toggle', profileId: profile.id, profileName: profile.cliName, extensionId: button.dataset.extensionId, enabled: button.dataset.enabled === 'true' });
