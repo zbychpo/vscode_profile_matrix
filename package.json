@@ -1,0 +1,55 @@
+{
+    "name": "profile-extension-matrix",
+    "displayName": "Profile Extension Matrix",
+    "description": "View and manage extensions across local VS Code profiles.",
+    "version": "0.0.1",
+    "publisher": "local",
+    "engines": {
+        "vscode": "^1.133.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "profileExtensionMatrix.open",
+                "title": "Profile Extension Matrix: Open"
+            },
+            {
+                "command": "profileExtensionMatrix.refresh",
+                "title": "Profile Extension Matrix: Refresh"
+            }
+        ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "profileExtensionMatrix",
+                    "title": "Profile Extensions",
+                    "icon": "media/profile-extensions.svg"
+                }
+            ]
+        },
+        "views": {
+            "profileExtensionMatrix": [
+                {
+                    "type": "webview",
+                    "id": "profileExtensionMatrix.matrixView",
+                    "name": "Extension Matrix"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "vscode:prepublish": "npm run compile"
+    },
+    "devDependencies": {
+        "@types/node": "^22.10.1",
+        "@types/vscode": "^1.125.0",
+        "typescript": "^5.7.2"
+    }
+}
