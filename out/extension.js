@@ -47,9 +47,16 @@ function activate(context) {
 class MatrixViewProvider {
     static viewType = 'profileExtensionMatrix.matrixView';
     view;
+    lastMatrix;
     resolveWebviewView(webviewView) {
         this.view = webviewView;
-        webviewView.webview.options = { enableScripts: true };
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [
+                vscode.Uri.file(path.join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.vscode', 'extensions')),
+                vscode.Uri.file(getProfilesDirectory())
+            ]
+        };
         webviewView.webview.html = getWebviewHtml(webviewView.webview);
         webviewView.webview.onDidReceiveMessage(async (message) => {
             if (!isMessage(message)) {
@@ -64,14 +71,48 @@ class MatrixViewProvider {
             if (message.type === 'openExtension') {
                 await vscode.commands.executeCommand('extension.open', message.extensionId);
             }
+            if (message.type === 'update') {
+                await this.updateExtension(message.extensionId);
+            }
+            if (message.type === 'ready' && this.lastMatrix) {
+                webviewView.webview.postMessage({ type: 'data', data: this.toWebviewMatrix(this.lastMatrix) });
+            }
         });
         void this.refresh();
     }
     async refresh() {
+        const data = await loadMatrix();
+        this.lastMatrix = data;
         if (!this.view) {
             return;
         }
-        this.view.webview.postMessage({ type: 'data', data: await loadMatrix() });
+        this.view.webview.postMessage({ type: 'data', data: this.toWebviewMatrix(data) });
+    }
+    toWebviewMatrix(data) {
+        if (!this.view) {
+            return data;
+        }
+        const webview = this.view.webview;
+        return {
+            ...data,
+            extensions: data.extensions.map((extension) => ({
+                ...extension,
+                iconUri: extension.iconUri && !extension.iconUri.startsWith('http')
+                    ? webview.asWebviewUri(vscode.Uri.file(extension.iconUri)).toString()
+                    : extension.iconUri
+            }))
+        };
+    }
+    async updateExtension(extensionId) {
+        try {
+            await runCodeCliCommand(['--install-extension', extensionId, '--force']);
+            vscode.window.showInformationMessage(`「${extensionId}」を更新しました。`);
+            await this.refresh();
+        }
+        catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`拡張機能を更新できませんでした: ${detail}`);
+        }
     }
     async toggleExtension(message) {
         const verb = message.enabled ? '追加' : '削除';
@@ -113,22 +154,100 @@ async function loadMatrix() {
         const extensions = new Map();
         for (const profile of profiles) {
             for (const extension of profile.extensions) {
-                const existing = extensions.get(extension.id) ?? { displayName: extension.displayName, profileIds: [] };
+                const existing = extensions.get(extension.id) ?? {
+                    displayName: extension.displayName,
+                    description: extension.description,
+                    publisher: extension.publisher,
+                    version: extension.version,
+                    iconUri: extension.iconPath,
+                    profileIds: []
+                };
                 existing.profileIds.push(profile.id);
                 extensions.set(extension.id, existing);
             }
         }
+        const extensionList = [...extensions].map(([id, extension]) => ({ id, ...extension }));
+        await applyUpdateInfo(extensionList);
         return {
             profiles: profiles.map(({ id, name, cliName }) => ({ id, name, cliName })).sort((left, right) => left.name.localeCompare(right.name)),
-            extensions: [...extensions]
-                .map(([id, extension]) => ({ id, ...extension }))
-                .sort((left, right) => left.displayName.localeCompare(right.displayName, 'ja'))
+            extensions: extensionList.sort((left, right) => left.displayName.localeCompare(right.displayName, 'ja'))
         };
     }
     catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         return { profiles: [], extensions: [], error: `プロファイル情報を読み取れませんでした: ${detail}` };
     }
+}
+async function applyUpdateInfo(extensions) {
+    if (!extensions.length) {
+        return;
+    }
+    try {
+        const galleryInfo = await fetchGalleryInfo(extensions.map((extension) => extension.id));
+        for (const extension of extensions) {
+            const info = galleryInfo.get(extension.id.toLowerCase());
+            if (!info) {
+                continue;
+            }
+            extension.deprecated = info.deprecated;
+            if (extension.version && info.version) {
+                extension.latestVersion = info.version;
+                extension.hasUpdate = isNewerVersion(info.version, extension.version);
+            }
+        }
+    }
+    catch {
+        // Marketplace lookup is best-effort; ignore failures (e.g. offline).
+    }
+}
+function isNewerVersion(latest, installed) {
+    const toParts = (value) => value.split('.').map((part) => Number.parseInt(part, 10) || 0);
+    const latestParts = toParts(latest);
+    const installedParts = toParts(installed);
+    for (let index = 0; index < Math.max(latestParts.length, installedParts.length); index++) {
+        const latestPart = latestParts[index] ?? 0;
+        const installedPart = installedParts[index] ?? 0;
+        if (latestPart !== installedPart) {
+            return latestPart > installedPart;
+        }
+    }
+    return false;
+}
+async function fetchGalleryInfo(ids) {
+    const uniqueIds = [...new Set(ids.map((id) => id.toLowerCase()))];
+    const response = await fetch('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json;api-version=3.0-preview.1'
+        },
+        body: JSON.stringify({
+            filters: [{
+                    criteria: uniqueIds.map((id) => ({ filterType: 7, value: id })),
+                    pageNumber: 1,
+                    pageSize: uniqueIds.length,
+                    sortBy: 0,
+                    sortOrder: 0
+                }],
+            // IncludeLatestVersionOnly (0x200) | IncludeVersionProperties (0x10)
+            flags: 528
+        })
+    });
+    if (!response.ok) {
+        return new Map();
+    }
+    const payload = await response.json();
+    const result = new Map();
+    for (const extension of payload.results?.[0]?.extensions ?? []) {
+        const publisherName = extension.publisher?.publisherName;
+        const extensionName = extension.extensionName;
+        const latestVersion = extension.versions?.[0];
+        if (publisherName && extensionName) {
+            const deprecated = latestVersion?.properties?.some((property) => property.key === 'Microsoft.VisualStudio.Code.Deprecated' && property.value === 'true') ?? false;
+            result.set(`${publisherName}.${extensionName}`.toLowerCase(), { version: latestVersion?.version, deprecated });
+        }
+    }
+    return result;
 }
 function getProfilesDirectory() {
     if (process.platform === 'win32') {
@@ -196,7 +315,7 @@ async function readExtensionInfo(extension) {
         return { id, displayName: id };
     }
     try {
-        return { id, displayName: await readDisplayName(toFilePath(location), id) };
+        return { id, ...await readManifestInfo(toFilePath(location), id) };
     }
     catch {
         return { id, displayName: id };
@@ -204,7 +323,7 @@ async function readExtensionInfo(extension) {
 }
 async function readDefaultExtensions() {
     const ids = await listExtensionsForProfile('Default');
-    return Promise.all(ids.map(async (id) => ({ id, displayName: await findInstalledDisplayName(id) })));
+    return Promise.all(ids.map(async (id) => ({ id, ...await findInstalledManifest(id) })));
 }
 function listExtensionsForProfile(profileName) {
     return runCodeCliCommand(['--profile', profileName, '--list-extensions'])
@@ -236,30 +355,51 @@ function getWindowsCodeExecutablePath() {
 function getWindowsCodeCliScriptPath() {
     return path.join(vscode.env.appRoot, 'out', 'cli.js');
 }
-async function findInstalledDisplayName(id) {
+async function findInstalledManifest(id) {
     const extensionsDirectory = path.join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.vscode', 'extensions');
     try {
         const entries = await node_fs_1.promises.readdir(extensionsDirectory, { withFileTypes: true });
         const matchingDirectory = entries.find((entry) => entry.isDirectory() && entry.name.toLowerCase().startsWith(`${id.toLowerCase()}-`));
-        return matchingDirectory ? await readDisplayName(path.join(extensionsDirectory, matchingDirectory.name), id) : id;
+        return matchingDirectory ? await readManifestInfo(path.join(extensionsDirectory, matchingDirectory.name), id) : { displayName: id };
     }
     catch {
-        return id;
+        return { displayName: id };
     }
 }
-async function readDisplayName(extensionDirectory, fallback) {
+async function readManifestInfo(extensionDirectory, fallback) {
     const manifest = JSON.parse(await node_fs_1.promises.readFile(path.join(extensionDirectory, 'package.json'), 'utf8'));
-    const displayName = manifest.displayName ?? manifest.name ?? fallback;
-    const localizationKey = /^%(.+)%$/.exec(displayName)?.[1];
-    if (!localizationKey) {
-        return displayName;
-    }
+    const translations = await readTranslations(extensionDirectory);
+    const resolve = (value) => {
+        if (!value) {
+            return value;
+        }
+        const localizationKey = /^%(.+)%$/.exec(value)?.[1];
+        return localizationKey ? translations[localizationKey] ?? undefined : value;
+    };
+    const iconPath = manifest.icon ? path.join(extensionDirectory, manifest.icon) : undefined;
+    return {
+        displayName: resolve(manifest.displayName ?? manifest.name) ?? fallback,
+        description: resolve(manifest.description),
+        publisher: manifest.publisher,
+        version: manifest.version,
+        iconPath: iconPath && await fileExists(iconPath) ? iconPath : undefined
+    };
+}
+async function readTranslations(extensionDirectory) {
     try {
-        const translations = JSON.parse(await node_fs_1.promises.readFile(path.join(extensionDirectory, 'package.nls.json'), 'utf8'));
-        return translations[localizationKey] ?? fallback;
+        return JSON.parse(await node_fs_1.promises.readFile(path.join(extensionDirectory, 'package.nls.json'), 'utf8'));
     }
     catch {
-        return fallback;
+        return {};
+    }
+}
+async function fileExists(filePath) {
+    try {
+        await node_fs_1.promises.access(filePath);
+        return true;
+    }
+    catch {
+        return false;
     }
 }
 function toFilePath(location) {
@@ -270,7 +410,7 @@ function isMessage(value) {
         return false;
     }
     const message = value;
-    return message.type === 'refresh' || (message.type === 'openExtension' && typeof message.extensionId === 'string') || (message.type === 'toggle' &&
+    return message.type === 'refresh' || message.type === 'ready' || (message.type === 'openExtension' && typeof message.extensionId === 'string') || (message.type === 'update' && typeof message.extensionId === 'string') || (message.type === 'toggle' &&
         typeof message.profileId === 'string' &&
         typeof message.profileName === 'string' &&
         typeof message.extensionId === 'string' &&
@@ -278,7 +418,7 @@ function isMessage(value) {
 }
 function getWebviewHtml(webview) {
     const nonce = createNonce();
-    const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+    const csp = `default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
     return `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -299,13 +439,24 @@ function getWebviewHtml(webview) {
     th { position: sticky; top: 0; background: var(--vscode-sideBar-background); z-index: 1; white-space: nowrap; }
     th:first-child, td:first-child { position: sticky; left: 0; background: var(--vscode-sideBar-background); width: 280px; z-index: 2; }
     th:first-child { z-index: 3; }
+    th:not(:first-child) { text-align: center; }
     td:not(:first-child) { text-align: center; }
-    .cell { background: transparent; color: var(--vscode-foreground); min-width: 30px; padding: 3px 7px; }
+    .cell { background: transparent; color: var(--vscode-foreground); display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 3px 7px; }
     .cell.enabled { color: var(--vscode-testing-iconPassed); }
-    .extension-name { display: block; }
-    .extension-id { color: var(--vscode-descriptionForeground); display: block; font-size: 11px; margin-top: 2px; }
+    .extension-row { align-items: flex-start; display: flex; gap: 8px; }
+    .extension-icon { border-radius: 4px; flex: none; height: 32px; width: 32px; }
+    .extension-icon.placeholder { background: var(--vscode-badge-background); }
+    .extension-details { min-width: 0; }
     .extension-link { background: transparent; color: var(--vscode-textLink-foreground); display: block; overflow: hidden; padding: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
     .extension-link:hover { background: transparent; color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
+    .extension-link.deprecated { text-decoration: line-through; }
+    .deprecated-badge { background: var(--vscode-editorWarning-foreground); border-radius: 3px; color: var(--vscode-editor-background); font-size: 10px; margin-left: 4px; padding: 0 4px; }
+    .extension-description { color: var(--vscode-descriptionForeground); display: block; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .extension-meta { color: var(--vscode-descriptionForeground); display: block; font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .extension-publisher { font-weight: 600; }
+    .version-old { text-decoration: line-through; }
+    .update-button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; border-radius: 3px; cursor: pointer; font-size: 10px; margin-left: 4px; padding: 1px 5px; }
+    .update-button:hover { background: var(--vscode-button-hoverBackground); }
     .message { color: var(--vscode-descriptionForeground); margin: 18px 0; }
     .error { color: var(--vscode-errorForeground); }
   </style>
@@ -323,6 +474,7 @@ function getWebviewHtml(webview) {
     window.addEventListener('message', (event) => {
       if (event.data.type === 'data') { matrix = event.data.data; render(); }
     });
+    vscode.postMessage({ type: 'ready' });
     function escapeHtml(value) {
       return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
     }
@@ -340,7 +492,25 @@ function getWebviewHtml(webview) {
           const title = enabled ? 'このプロファイルから削除' : 'このプロファイルへ追加';
           return '<td><button class="cell ' + (enabled ? 'enabled' : '') + '" title="' + title + '" data-profile-id="' + escapeHtml(profile.id) + '" data-extension-id="' + escapeHtml(extension.id) + '" data-enabled="' + (!enabled) + '">' + label + '</button></td>';
         }).join('');
-                return '<tr><td title="' + escapeHtml(extension.id) + '"><button class="extension-link" data-open-extension="' + escapeHtml(extension.id) + '">' + escapeHtml(extension.displayName) + '</button><span class="extension-id">' + escapeHtml(extension.id) + '</span></td>' + cells + '</tr>';
+        const icon = extension.iconUri
+          ? '<img class="extension-icon" src="' + escapeHtml(extension.iconUri) + '" alt="">'
+          : '<div class="extension-icon placeholder"></div>';
+        const description = extension.description
+          ? '<span class="extension-description" title="' + escapeHtml(extension.description) + '">' + escapeHtml(extension.description) + '</span>'
+          : '';
+        const publisher = extension.publisher ? '<span class="extension-publisher">' + escapeHtml(extension.publisher) + '</span>' : '';
+        const versionText = extension.version
+          ? (extension.hasUpdate
+              ? '<span class="version-old">v' + escapeHtml(extension.version) + '</span> \u2192 v' + escapeHtml(extension.latestVersion)
+              : 'v' + escapeHtml(extension.version))
+          : '';
+        const updateButton = extension.hasUpdate
+          ? '<button class="update-button" title="最新バージョンに更新" data-update-extension="' + escapeHtml(extension.id) + '">更新あり</button>'
+          : '';
+        const deprecatedBadge = extension.deprecated ? '<span class="deprecated-badge" title="この拡張機能は非推奨です">非推奨</span>' : '';
+        const meta = [publisher, versionText].filter(Boolean).join(' \u00b7 ');
+        const nameClass = extension.deprecated ? 'extension-link deprecated' : 'extension-link';
+        return '<tr><td title="' + escapeHtml(extension.id) + '"><div class="extension-row">' + icon + '<div class="extension-details"><button class="' + nameClass + '" data-open-extension="' + escapeHtml(extension.id) + '">' + escapeHtml(extension.displayName) + '</button>' + deprecatedBadge + description + '<span class="extension-meta">' + meta + updateButton + '</span></div></div></td>' + cells + '</tr>';
       }).join('');
             content.innerHTML = '<div class="matrix"><table><colgroup>' + columns + '</colgroup><thead><tr><th>Extension</th>' + header + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       content.querySelectorAll('.cell').forEach((button) => button.addEventListener('click', () => {
@@ -348,6 +518,10 @@ function getWebviewHtml(webview) {
         if (profile) vscode.postMessage({ type: 'toggle', profileId: profile.id, profileName: profile.cliName, extensionId: button.dataset.extensionId, enabled: button.dataset.enabled === 'true' });
       }));
     content.querySelectorAll('[data-open-extension]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: 'openExtension', extensionId: button.dataset.openExtension })));
+    content.querySelectorAll('[data-update-extension]').forEach((button) => button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      vscode.postMessage({ type: 'update', extensionId: button.dataset.updateExtension });
+    }));
     }
   </script>
 </body>
