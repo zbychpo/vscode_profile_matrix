@@ -65,7 +65,7 @@ class MatrixViewProvider implements vscode.WebviewViewProvider {
                 await this.toggleExtension(message);
             }
             if (message.type === 'openExtension') {
-                await vscode.commands.executeCommand('workbench.extensions.search', `@id:${message.extensionId}`);
+                await vscode.commands.executeCommand('extension.open', message.extensionId);
             }
         });
         void this.refresh();
@@ -331,7 +331,7 @@ function getWebviewHtml(webview: vscode.Webview): string {
     button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; padding: 6px 9px; cursor: pointer; }
     button:hover { background: var(--vscode-button-hoverBackground); }
     .matrix { overflow: auto; border: 1px solid var(--vscode-panel-border); }
-    table { border-collapse: collapse; table-layout: fixed; width: max-content; min-width: 100%; font-size: 12px; }
+    table { border-collapse: collapse; table-layout: fixed; width: max-content; font-size: 12px; }
     th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 6px 8px; text-align: left; }
     th { position: sticky; top: 0; background: var(--vscode-sideBar-background); z-index: 1; white-space: nowrap; }
     th:first-child, td:first-child { position: sticky; left: 0; background: var(--vscode-sideBar-background); width: 280px; z-index: 2; }
