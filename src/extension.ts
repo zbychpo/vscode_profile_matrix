@@ -73,7 +73,7 @@ class MatrixViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.options = {
             enableScripts: true,
             localResourceRoots: [
-                vscode.Uri.file(path.join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.vscode', 'extensions')),
+                vscode.Uri.file(getGlobalExtensionsDirectory()),
                 vscode.Uri.file(getProfilesDirectory())
             ]
         };
@@ -127,10 +127,18 @@ class MatrixViewProvider implements vscode.WebviewViewProvider {
     }
 
     private async updateExtension(extensionId: string): Promise<void> {
+        const before = this.lastMatrix?.extensions.find((extension) => extension.id === extensionId)?.version;
         try {
             await runCodeCliCommand(['--install-extension', extensionId, '--force']);
-            vscode.window.showInformationMessage(`「${extensionId}」を更新しました。`);
             await this.refresh();
+            const after = this.lastMatrix?.extensions.find((extension) => extension.id === extensionId)?.version;
+            if (after && after !== before) {
+                vscode.window.showInformationMessage(`「${extensionId}」を v${after} に更新しました。`);
+            } else {
+                vscode.window.showWarningMessage(
+                    `「${extensionId}」の更新コマンドは完了しましたが、バージョンが変わりませんでした。VS Code を一度終了してから再度更新をお試しください。`
+                );
+            }
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`拡張機能を更新できませんでした: ${detail}`);
@@ -215,44 +223,25 @@ async function applyUpdateInfo(extensions: MatrixExtension[]): Promise<void> {
     if (!extensions.length) {
         return;
     }
-    try {
-        const galleryInfo = await fetchGalleryInfo(extensions.map((extension) => extension.id));
-        for (const extension of extensions) {
-            const info = galleryInfo.get(extension.id.toLowerCase());
-            if (!info) {
-                continue;
-            }
-            extension.deprecated = info.deprecated;
-            if (extension.version && info.version) {
-                extension.latestVersion = info.version;
-                extension.hasUpdate = isNewerVersion(info.version, extension.version);
-            }
+    const [latestVersions, deprecatedIds] = await Promise.all([
+        fetchLatestVersions(extensions.map((extension) => extension.id)).catch(() => new Map<string, string>()),
+        fetchDeprecatedIds().catch(() => new Set<string>())
+    ]);
+    for (const extension of extensions) {
+        extension.deprecated = deprecatedIds.has(extension.id.toLowerCase());
+        const latest = latestVersions.get(extension.id.toLowerCase());
+        if (extension.version && latest) {
+            extension.latestVersion = latest;
+            extension.hasUpdate = isNewerVersion(latest, extension.version);
         }
-    } catch {
-        // Marketplace lookup is best-effort; ignore failures (e.g. offline).
     }
 }
 
 function isNewerVersion(latest: string, installed: string): boolean {
-    const toParts = (value: string) => value.split('.').map((part) => Number.parseInt(part, 10) || 0);
-    const latestParts = toParts(latest);
-    const installedParts = toParts(installed);
-    for (let index = 0; index < Math.max(latestParts.length, installedParts.length); index++) {
-        const latestPart = latestParts[index] ?? 0;
-        const installedPart = installedParts[index] ?? 0;
-        if (latestPart !== installedPart) {
-            return latestPart > installedPart;
-        }
-    }
-    return false;
+    return compareVersions(latest, installed) > 0;
 }
 
-interface GalleryInfo {
-    version?: string;
-    deprecated: boolean;
-}
-
-async function fetchGalleryInfo(ids: string[]): Promise<Map<string, GalleryInfo>> {
+async function fetchLatestVersions(ids: string[]): Promise<Map<string, string>> {
     const uniqueIds = [...new Set(ids.map((id) => id.toLowerCase()))];
     const response = await fetch('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery', {
         method: 'POST',
@@ -268,8 +257,8 @@ async function fetchGalleryInfo(ids: string[]): Promise<Map<string, GalleryInfo>
                 sortBy: 0,
                 sortOrder: 0
             }],
-            // IncludeLatestVersionOnly (0x200) | IncludeVersionProperties (0x10)
-            flags: 528
+            // IncludeLatestVersionOnly (0x200)
+            flags: 512
         })
     });
     if (!response.ok) {
@@ -280,23 +269,36 @@ async function fetchGalleryInfo(ids: string[]): Promise<Map<string, GalleryInfo>
             extensions?: Array<{
                 publisher?: { publisherName?: string };
                 extensionName?: string;
-                versions?: Array<{ version?: string; properties?: Array<{ key?: string; value?: string }> }>;
+                versions?: Array<{ version?: string }>;
             }>;
         }>;
     };
-    const result = new Map<string, GalleryInfo>();
+    const result = new Map<string, string>();
     for (const extension of payload.results?.[0]?.extensions ?? []) {
         const publisherName = extension.publisher?.publisherName;
         const extensionName = extension.extensionName;
-        const latestVersion = extension.versions?.[0];
-        if (publisherName && extensionName) {
-            const deprecated = latestVersion?.properties?.some(
-                (property) => property.key === 'Microsoft.VisualStudio.Code.Deprecated' && property.value === 'true'
-            ) ?? false;
-            result.set(`${publisherName}.${extensionName}`.toLowerCase(), { version: latestVersion?.version, deprecated });
+        const version = extension.versions?.[0]?.version;
+        if (publisherName && extensionName && version) {
+            result.set(`${publisherName}.${extensionName}`.toLowerCase(), version);
         }
     }
     return result;
+}
+
+let deprecatedIdsCache: Set<string> | undefined;
+
+// VS Code itself sources its "deprecated extension" warnings from this curated CDN file (not the gallery API).
+async function fetchDeprecatedIds(): Promise<Set<string>> {
+    if (deprecatedIdsCache) {
+        return deprecatedIdsCache;
+    }
+    const response = await fetch('https://main.vscode-cdn.net/extensions/marketplace.json');
+    if (!response.ok) {
+        return new Set();
+    }
+    const payload = await response.json() as { deprecated?: Record<string, unknown> };
+    deprecatedIdsCache = new Set(Object.keys(payload.deprecated ?? {}).map((id) => id.toLowerCase()));
+    return deprecatedIdsCache;
 }
 
 function getProfilesDirectory(): string {
@@ -363,14 +365,18 @@ async function readExtensionInfo(extension: StoredExtension): Promise<ExtensionI
     if (!id) {
         return undefined;
     }
+    const scanned = await findInstalledManifest(id);
+    if (scanned.version) {
+        return { id, ...scanned };
+    }
     const location = extension.location?.fsPath ?? extension.location?.path;
     if (!location) {
-        return { id, displayName: id };
+        return { id, ...scanned };
     }
     try {
         return { id, ...await readManifestInfo(toFilePath(location), id) };
     } catch {
-        return { id, displayName: id };
+        return { id, ...scanned };
     }
 }
 
@@ -416,15 +422,38 @@ function getWindowsCodeCliScriptPath(): string {
 
 type ManifestInfo = Omit<ExtensionInfo, 'id'>;
 
+function getGlobalExtensionsDirectory(): string {
+    return path.join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.vscode', 'extensions');
+}
+
 async function findInstalledManifest(id: string): Promise<ManifestInfo> {
-    const extensionsDirectory = path.join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.vscode', 'extensions');
+    const extensionsDirectory = getGlobalExtensionsDirectory();
     try {
+        // Match "<id>-<version>" exactly so extensions with an overlapping id prefix (e.g. a "-british-english" variant) aren't picked up.
+        const versionPattern = new RegExp(`^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+\\.\\d+\\.\\d+)`, 'i');
         const entries = await fs.readdir(extensionsDirectory, { withFileTypes: true });
-        const matchingDirectory = entries.find((entry) => entry.isDirectory() && entry.name.toLowerCase().startsWith(`${id.toLowerCase()}-`));
+        const matchingDirectory = entries
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => ({ name: entry.name, version: versionPattern.exec(entry.name)?.[1] }))
+            .filter((entry): entry is { name: string; version: string } => Boolean(entry.version))
+            .sort((left, right) => compareVersions(right.version, left.version))[0];
         return matchingDirectory ? await readManifestInfo(path.join(extensionsDirectory, matchingDirectory.name), id) : { displayName: id };
     } catch {
         return { displayName: id };
     }
+}
+
+function compareVersions(left: string, right: string): number {
+    const toParts = (value: string) => value.split('.').map((part) => Number.parseInt(part, 10) || 0);
+    const leftParts = toParts(left);
+    const rightParts = toParts(right);
+    for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index++) {
+        const diff = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+        if (diff !== 0) {
+            return diff;
+        }
+    }
+    return 0;
 }
 
 async function readManifestInfo(extensionDirectory: string, fallback: string): Promise<ManifestInfo> {
