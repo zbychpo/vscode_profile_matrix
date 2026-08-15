@@ -71,9 +71,6 @@ class MatrixViewProvider {
             if (message.type === 'openExtension') {
                 await vscode.commands.executeCommand('extension.open', message.extensionId);
             }
-            if (message.type === 'update') {
-                await this.updateExtension(message.extensionId);
-            }
             if (message.type === 'ready' && this.lastMatrix) {
                 webviewView.webview.postMessage({ type: 'data', data: this.toWebviewMatrix(this.lastMatrix) });
             }
@@ -105,28 +102,6 @@ class MatrixViewProvider {
                     : extension.iconUri
             }))
         };
-    }
-    async updateExtension(extensionId) {
-        const before = this.lastMatrix?.extensions.find((extension) => extension.id === extensionId)?.version;
-        const expected = this.lastMatrix?.extensions.find((extension) => extension.id === extensionId)?.latestVersion;
-        try {
-            await runCodeCliCommand(['--install-extension', extensionId, '--force', '--verbose']);
-            await this.refresh();
-            const after = this.lastMatrix?.extensions.find((extension) => extension.id === extensionId)?.version;
-            if (after && after !== before) {
-                vscode.window.showInformationMessage(`「${extensionId}」を v${after} に更新しました。`);
-            }
-            else if (expected && before && !isNewerVersion(expected, before)) {
-                vscode.window.showInformationMessage(`「${extensionId}」は既に最新バージョン v${before} です。`);
-            }
-            else {
-                vscode.window.showWarningMessage(`「${extensionId}」の更新コマンドは完了しましたが、v${before ?? '?'} からバージョンが変わりませんでした。`);
-            }
-        }
-        catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(`拡張機能を更新できませんでした: ${detail}`);
-        }
     }
     async switchProfile() {
         try {
@@ -460,7 +435,7 @@ function isMessage(value) {
         return false;
     }
     const message = value;
-    return message.type === 'refresh' || message.type === 'ready' || (message.type === 'openExtension' && typeof message.extensionId === 'string') || (message.type === 'update' && typeof message.extensionId === 'string') || (message.type === 'switchProfile' && typeof message.profileName === 'string') || (message.type === 'toggle' &&
+    return message.type === 'refresh' || message.type === 'ready' || (message.type === 'openExtension' && typeof message.extensionId === 'string') || (message.type === 'switchProfile' && typeof message.profileName === 'string') || (message.type === 'toggle' &&
         typeof message.profileId === 'string' &&
         typeof message.profileName === 'string' &&
         typeof message.extensionId === 'string' &&
@@ -507,8 +482,7 @@ function getWebviewHtml(webview) {
     .extension-meta { color: var(--vscode-descriptionForeground); display: block; font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .extension-publisher { font-weight: 600; }
     .version-old { text-decoration: line-through; }
-    .update-button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; border-radius: 3px; cursor: pointer; font-size: 10px; margin-left: 4px; padding: 1px 5px; }
-    .update-button:hover { background: var(--vscode-button-hoverBackground); }
+    .update-badge { background: var(--vscode-badge-background); border-radius: 3px; color: var(--vscode-badge-foreground); font-size: 10px; margin-left: 4px; padding: 1px 5px; }
     .message { color: var(--vscode-descriptionForeground); margin: 18px 0; }
     .error { color: var(--vscode-errorForeground); }
   </style>
@@ -556,13 +530,13 @@ function getWebviewHtml(webview) {
               ? '<span class="version-old">v' + escapeHtml(extension.version) + '</span> \u2192 v' + escapeHtml(extension.latestVersion)
               : 'v' + escapeHtml(extension.version))
           : '';
-        const updateButton = extension.hasUpdate
-          ? '<button class="update-button" title="最新バージョンに更新" data-update-extension="' + escapeHtml(extension.id) + '">更新あり</button>'
+                const updateBadge = extension.hasUpdate
+                    ? '<span class="update-badge" title="更新があります">更新あり</span>'
           : '';
         const deprecatedBadge = extension.deprecated ? '<span class="deprecated-badge" title="この拡張機能は非推奨です">非推奨</span>' : '';
         const meta = [publisher, versionText].filter(Boolean).join(' \u00b7 ');
         const nameClass = extension.deprecated ? 'extension-link deprecated' : 'extension-link';
-        return '<tr><td title="' + escapeHtml(extension.id) + '"><div class="extension-row">' + icon + '<div class="extension-details"><button class="' + nameClass + '" data-open-extension="' + escapeHtml(extension.id) + '">' + escapeHtml(extension.displayName) + '</button>' + deprecatedBadge + description + '<span class="extension-meta">' + meta + updateButton + '</span></div></div></td>' + cells + '</tr>';
+        return '<tr><td title="' + escapeHtml(extension.id) + '"><div class="extension-row">' + icon + '<div class="extension-details"><button class="' + nameClass + '" data-open-extension="' + escapeHtml(extension.id) + '">' + escapeHtml(extension.displayName) + '</button>' + deprecatedBadge + description + '<span class="extension-meta">' + meta + updateBadge + '</span></div></div></td>' + cells + '</tr>';
       }).join('');
                         content.innerHTML = '<div class="matrix"><table><colgroup>' + columns + '</colgroup><thead><tr><th>Extension</th>' + header + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
             content.querySelectorAll('[data-switch-profile]').forEach((button) => button.addEventListener('click', () => {
@@ -573,10 +547,6 @@ function getWebviewHtml(webview) {
         if (profile) vscode.postMessage({ type: 'toggle', profileId: profile.id, profileName: profile.cliName, extensionId: button.dataset.extensionId, enabled: button.dataset.enabled === 'true' });
       }));
     content.querySelectorAll('[data-open-extension]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: 'openExtension', extensionId: button.dataset.openExtension })));
-    content.querySelectorAll('[data-update-extension]').forEach((button) => button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      vscode.postMessage({ type: 'update', extensionId: button.dataset.updateExtension });
-    }));
     }
   </script>
 </body>
