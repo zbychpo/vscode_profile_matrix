@@ -2,11 +2,11 @@
     "name": "profile-extension-matrix",
     "displayName": "Profile Extension Matrix",
     "description": "View and manage extensions across local VS Code profiles.",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "publisher": "soranoana",
     "repository": {
         "type": "git",
-        "url": "https://github.com/soranoana/profile-extension-matrix.git"
+        "url": "https://github.com/Soranoana/vscode_profile_matrix.git"
     },
     "engines": {
         "vscode": "^1.133.0"

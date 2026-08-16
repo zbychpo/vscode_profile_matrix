@@ -2,7 +2,7 @@
 
 VS Code のローカルプロファイルごとに、インストール済み拡張機能を一覧で比較・管理する拡張機能です。プロファイルごとの構成を横断して確認し、必要な拡張機能を追加または削除できます。
 
-![Profile Extension Matrix の画面](https://raw.githubusercontent.com/soranoana/profile-extension-matrix/main/media/screen_image.png)
+![Profile Extension Matrix の画面](https://raw.githubusercontent.com/Soranoana/vscode_profile_matrix/main/media/screen_image.png)
 
 ## 主な機能
 
