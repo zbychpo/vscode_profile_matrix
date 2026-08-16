@@ -262,20 +262,31 @@ function getProfilesDirectory() {
     return path.join(process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? '', '.config'), 'Code', 'User', 'profiles');
 }
 async function readProfileNames() {
-    const syncFile = path.join(path.dirname(getProfilesDirectory()), 'sync', 'profiles', 'lastSyncprofiles.json');
+    const syncDirectory = path.join(path.dirname(getProfilesDirectory()), 'sync', 'profiles');
     try {
-        const parsed = JSON.parse(await node_fs_1.promises.readFile(syncFile, 'utf8'));
-        const content = parsed.syncData?.content;
-        if (typeof content !== 'string') {
-            return new Map();
+        const entries = await node_fs_1.promises.readdir(syncDirectory, { withFileTypes: true });
+        const syncFiles = entries
+            .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+            .map((entry) => entry.name)
+            .sort()
+            .reverse();
+        for (const syncFile of syncFiles) {
+            const parsed = JSON.parse(await node_fs_1.promises.readFile(path.join(syncDirectory, syncFile), 'utf8'));
+            const content = parsed.content ?? parsed.syncData?.content;
+            if (typeof content !== 'string') {
+                continue;
+            }
+            const records = findProfileRecords(JSON.parse(content));
+            const names = new Map(records.filter(hasIdAndName).map((profile) => [profile.id, profile.name]));
+            if (names.size > 0) {
+                return names;
+            }
         }
-        const profileData = JSON.parse(content);
-        const records = findProfileRecords(profileData);
-        return new Map(records.filter(hasIdAndName).map((profile) => [profile.id, profile.name]));
     }
     catch {
-        return new Map();
+        // Fall back to directory IDs when profile sync data is unavailable.
     }
+    return new Map();
 }
 function findProfileRecords(value) {
     if (Array.isArray(value)) {
