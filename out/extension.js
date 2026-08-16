@@ -475,37 +475,37 @@ function getWebviewHtml(webview) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Profile Extension Matrix</title>
   <style>
-    :root { color: var(--vscode-foreground); font-family: var(--vscode-font-family); }
-    body { margin: 0; padding: 12px; background: var(--vscode-sideBar-background); }
-    .toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
-    .profile-header { background: transparent; color: var(--vscode-foreground); display: block; padding: 0; text-align: center; width: 100%; }
+    :root { color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: 13px; background: var(--vscode-editor-background); }
+    body { margin: 0; padding: 12px; background: var(--vscode-editor-background); color: var(--vscode-foreground); }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+    .profile-header { background: transparent; color: var(--vscode-foreground); display: block; padding: 0; text-align: center; width: 100%; font-weight: 600; }
     .profile-header:hover { background: transparent; color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
-    input { flex: 1; min-width: 0; padding: 6px 8px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
-    button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; padding: 6px 9px; cursor: pointer; }
+    input { flex: 1; min-width: 0; min-height: 30px; padding: 6px 10px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); border-radius: 4px; font-size: 13px; }
+    button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
     button:hover { background: var(--vscode-button-hoverBackground); }
-    .matrix { overflow: auto; border: 1px solid var(--vscode-panel-border); }
-    table { border-collapse: collapse; table-layout: fixed; width: max-content; font-size: 12px; }
-    th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 6px 8px; text-align: left; }
-    th { position: sticky; top: 0; background: var(--vscode-sideBar-background); z-index: 1; white-space: nowrap; }
-    th:first-child, td:first-child { position: sticky; left: 0; background: var(--vscode-sideBar-background); width: 280px; z-index: 2; }
+    .matrix { overflow: auto; border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: var(--vscode-editor-background); max-width: 100%; }
+    table { border-collapse: collapse; table-layout: auto; width: 100%; min-width: 620px; font-size: 12px; color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); }
+    th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 7px 8px; text-align: left; color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+    th { position: sticky; top: 0; background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground); z-index: 1; white-space: nowrap; font-weight: 600; }
+    th:first-child, td:first-child { position: sticky; left: 0; background: var(--vscode-editor-background); width: min(42vw, 300px); min-width: 220px; z-index: 2; }
     th:first-child { z-index: 3; }
     th:not(:first-child) { text-align: center; }
     td:not(:first-child) { text-align: center; }
-    .cell { background: transparent; color: var(--vscode-foreground); display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 3px 7px; }
-    .cell.enabled { color: var(--vscode-testing-iconPassed); }
+    .cell { background: rgba(255, 255, 255, 0.04); color: var(--vscode-foreground); display: inline-flex; align-items: center; justify-content: center; min-width: 30px; min-height: 24px; padding: 3px 7px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; font-weight: 700; }
+    .cell.enabled { background: rgba(46, 204, 113, 0.14); color: var(--vscode-testing-iconPassed); border-color: rgba(46, 204, 113, 0.5); }
     .extension-row { align-items: flex-start; display: flex; gap: 8px; }
     .extension-icon { border-radius: 4px; flex: none; height: 32px; width: 32px; }
     .extension-icon.placeholder { background: var(--vscode-badge-background); }
     .extension-details { min-width: 0; }
-    .extension-link { background: transparent; color: var(--vscode-textLink-foreground); display: block; overflow: hidden; padding: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+    .extension-link { background: transparent; color: var(--vscode-textLink-foreground); display: block; overflow: hidden; padding: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; width: 100%; font-weight: 600; }
     .extension-link:hover { background: transparent; color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
     .extension-link.deprecated { text-decoration: line-through; }
-    .deprecated-badge { background: var(--vscode-editorWarning-foreground); border-radius: 3px; color: var(--vscode-editor-background); font-size: 10px; margin-left: 4px; padding: 0 4px; }
-    .extension-description { color: var(--vscode-descriptionForeground); display: block; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .extension-meta { color: var(--vscode-descriptionForeground); display: block; font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .deprecated-badge { background: var(--vscode-editorWarning-foreground); border-radius: 3px; color: var(--vscode-editor-background); font-size: 10px; margin-left: 4px; padding: 0 4px; font-weight: 700; }
+    .extension-description { color: var(--vscode-descriptionForeground); display: block; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.95; }
+    .extension-meta { color: var(--vscode-descriptionForeground); display: block; font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.95; }
     .extension-publisher { font-weight: 600; }
     .version-old { text-decoration: line-through; }
-    .update-badge { background: var(--vscode-badge-background); border-radius: 3px; color: var(--vscode-badge-foreground); font-size: 10px; margin-left: 4px; padding: 1px 5px; }
+    .update-badge { background: var(--vscode-badge-background); border-radius: 3px; color: var(--vscode-badge-foreground); font-size: 10px; margin-left: 4px; padding: 1px 5px; font-weight: 600; }
     .message { color: var(--vscode-descriptionForeground); margin: 18px 0; }
     .error { color: var(--vscode-errorForeground); }
   </style>
