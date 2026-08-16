@@ -2,6 +2,8 @@
 
 VS Code のローカルプロファイルごとに、インストール済み拡張機能を一覧で比較・管理する拡張機能です。プロファイルごとの構成を横断して確認し、必要な拡張機能を追加または削除できます。
 
+![Profile Extension Matrix の画面](https://raw.githubusercontent.com/soranoana/profile-extension-matrix/main/media/screen_image.png)
+
 ## 主な機能
 
 - 既定プロファイルとカスタムプロファイルの拡張機能をマトリクスで表示
@@ -74,6 +76,3 @@ VS Code のローカルプロファイルごとに、インストール済み拡
 
 この拡張機能は、ローカルの VS Code プロファイル情報とインストール済み拡張機能のメタデータを読み取ります。更新状況と非推奨状態の確認のため、拡張機能 ID を Visual Studio Marketplace API に送信し、Microsoft が提供する Marketplace の公開情報を取得します。利用状況や個人情報を独自のサーバーへ送信することはありません。
 
-## 開発者向け情報
-
-開発環境のセットアップ、デバッグ、VSIX パッケージの作成・公開手順は [dev/DEVELOPMENT.md](dev/DEVELOPMENT.md) を参照してください。
