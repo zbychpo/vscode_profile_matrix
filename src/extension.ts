@@ -389,13 +389,9 @@ function runCodeCli(profileName: string, extensionId: string, install: boolean):
 }
 
 function runCodeCliCommand(args: string[]): Promise<string> {
-    const command = process.platform === 'win32' ? getWindowsCodeExecutablePath() : 'code';
-    const commandArgs = process.platform === 'win32' ? [getWindowsCodeCliScriptPath(), ...args] : args;
-    const environment = process.platform === 'win32'
-        ? { ...process.env, ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: '' }
-        : process.env;
+    const invocation = getCodeCliInvocation();
     return new Promise((resolve, reject) => {
-        execFile(command, commandArgs, { env: environment }, (error, stdout, stderr) => {
+        execFile(invocation.command, [...invocation.commandArgs, ...args], { env: invocation.environment }, (error, stdout, stderr) => {
             if (error) {
                 reject(new Error(stderr.trim() || error.message));
                 return;
@@ -403,6 +399,28 @@ function runCodeCliCommand(args: string[]): Promise<string> {
             resolve(stdout);
         });
     });
+}
+
+function getCodeCliInvocation(): {
+    command: string;
+    commandArgs: string[];
+    environment: NodeJS.ProcessEnv;
+} {
+    if (process.platform === 'win32') {
+        return {
+            command: getWindowsCodeExecutablePath(),
+            commandArgs: [getWindowsCodeCliScriptPath()],
+            environment: { ...process.env, ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: '' }
+        };
+    }
+
+    return {
+        command: process.platform === 'darwin'
+            ? path.resolve(vscode.env.appRoot, '..', '..', 'MacOS', 'Code')
+            : path.resolve(vscode.env.appRoot, '..', '..', '..', 'code'),
+        commandArgs: [path.join(vscode.env.appRoot, 'out', 'cli.js')],
+        environment: { ...process.env, ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: '' }
+    };
 }
 
 function getWindowsCodeExecutablePath(): string {
