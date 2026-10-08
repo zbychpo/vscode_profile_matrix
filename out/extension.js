@@ -302,6 +302,35 @@ function getProfilesDirectory() {
     return path.join(process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? '', '.config'), 'Code', 'User', 'profiles');
 }
 async function readProfileNames() {
+    const names = await readProfileNamesFromStorage();
+    return names.size > 0 ? names : readProfileNamesFromSync();
+}
+// VS Code keeps the list of profiles in globalStorage/storage.json; "location" is the profile's folder name under profiles/.
+async function readProfileNamesFromStorage() {
+    const storagePath = path.join(path.dirname(getProfilesDirectory()), 'globalStorage', 'storage.json');
+    try {
+        const storage = JSON.parse(await node_fs_1.promises.readFile(storagePath, 'utf8'));
+        const profiles = Array.isArray(storage.userDataProfiles) ? storage.userDataProfiles : [];
+        return new Map(profiles.flatMap((profile) => {
+            const location = toProfileFolderName(profile.location);
+            return location && typeof profile.name === 'string' ? [[location, profile.name]] : [];
+        }));
+    }
+    catch {
+        return new Map();
+    }
+}
+function toProfileFolderName(location) {
+    if (typeof location === 'string') {
+        return location.split(/[\\/]/).filter(Boolean).pop();
+    }
+    if (location && typeof location === 'object') {
+        const uri = location;
+        return toProfileFolderName(uri.fsPath ?? uri.path);
+    }
+    return undefined;
+}
+async function readProfileNamesFromSync() {
     const syncDirectory = path.join(path.dirname(getProfilesDirectory()), 'sync', 'profiles');
     try {
         const entries = await node_fs_1.promises.readdir(syncDirectory, { withFileTypes: true });
@@ -534,6 +563,8 @@ function getWebviewHtml(webview) {
     .toolbar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
     .profile-header { background: transparent; color: var(--vscode-foreground); display: block; padding: 0; text-align: center; width: 100%; font-weight: 600; }
     .profile-header:hover { background: transparent; color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
+    .profile-name, .profile-id { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-id { color: var(--vscode-descriptionForeground); font-size: 10px; font-weight: 400; min-height: 1.2em; opacity: 0.9; }
     input { flex: 1; min-width: 0; min-height: 30px; padding: 6px 10px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); border-radius: 4px; font-size: 13px; }
     button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
     button:hover { background: var(--vscode-button-hoverBackground); }
@@ -577,6 +608,7 @@ function getWebviewHtml(webview) {
     let columnWidths = {};
     let resizing = false;
     const extensionColumnKey = '__extension__';
+    const defaultProfileId = ${JSON.stringify(defaultProfileId)};
     const defaultExtensionColumnWidth = 300;
     const defaultProfileColumnWidth = 66;
     const minimumExtensionColumnWidth = 55;
@@ -602,7 +634,12 @@ function getWebviewHtml(webview) {
     const extensions = matrix.extensions.filter((extension) => (extension.id + ' ' + extension.displayName).toLowerCase().includes(query));
     const resizer = (key) => '<div class="resizer" title="' + escapeHtml(strings.resizeColumn) + '" data-column-key="' + escapeHtml(key) + '"></div>';
     const columns = '<col>' + matrix.profiles.map(() => '<col>').join('');
-    const header = matrix.profiles.map((profile) => '<th title="' + escapeHtml(profile.name) + '" data-column-key="' + escapeHtml(profile.id) + '"><button class="profile-header" data-switch-profile="' + escapeHtml(profile.name) + '">' + escapeHtml(profile.name) + '</button>' + resizer(profile.id) + '</th>').join('');
+    const header = matrix.profiles.map((profile) => {
+      // The default profile has no folder of its own, so its subtitle is left empty to keep the header rows aligned.
+      const folder = profile.id === defaultProfileId ? '' : profile.id;
+      const title = folder ? profile.name + ' (' + folder + ')' : profile.name;
+      return '<th title="' + escapeHtml(title) + '" data-column-key="' + escapeHtml(profile.id) + '"><button class="profile-header" data-switch-profile="' + escapeHtml(profile.name) + '"><span class="profile-name">' + escapeHtml(profile.name) + '</span><span class="profile-id">' + escapeHtml(folder) + '</span></button>' + resizer(profile.id) + '</th>';
+    }).join('');
       const rows = extensions.map((extension) => {
         const cells = matrix.profiles.map((profile) => {
           const enabled = extension.profileIds.includes(profile.id);
