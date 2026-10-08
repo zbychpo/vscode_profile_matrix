@@ -4,5 +4,6 @@
     "command.open.title": "Profile Extension Matrix: 開く",
     "command.refresh.title": "Profile Extension Matrix: 更新",
     "viewsContainer.title": "プロファイル拡張機能",
-    "view.matrix.name": "拡張機能マトリックス"
+    "view.matrix.name": "拡張機能マトリックス",
+    "config.columnWidths.description": "拡張機能マトリックスの列幅 (ピクセル)。キーはプロファイル ID です (`__extension__` は拡張機能の列)。すべてのプロファイルで共有されます。列の端をドラッグすると幅を変更し、ダブルクリックするとすべての列幅をリセットします。"
 }

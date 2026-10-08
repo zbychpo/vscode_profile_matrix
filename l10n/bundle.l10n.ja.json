@@ -21,5 +21,7 @@
     "Update available": "更新あり",
     "This extension is deprecated": "この拡張機能は非推奨です",
     "Deprecated": "非推奨",
-    "Extension": "拡張機能"
+    "Extension": "拡張機能",
+    "Could not save column widths: {0}": "列幅を保存できませんでした: {0}",
+    "Drag to resize the column. Double-click to reset all column widths.": "ドラッグして列幅を変更します。ダブルクリックするとすべての列幅をリセットします。"
 }

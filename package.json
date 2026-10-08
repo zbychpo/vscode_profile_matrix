@@ -29,6 +29,21 @@
                 "title": "%command.refresh.title%"
             }
         ],
+        "configuration": {
+            "title": "%displayName%",
+            "properties": {
+                "profileExtensionMatrix.columnWidths": {
+                    "type": "object",
+                    "default": {},
+                    "additionalProperties": {
+                        "type": "number",
+                        "minimum": 1
+                    },
+                    "scope": "application",
+                    "markdownDescription": "%config.columnWidths.description%"
+                }
+            }
+        },
         "viewsContainers": {
             "activitybar": [
                 {

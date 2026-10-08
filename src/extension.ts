@@ -49,6 +49,8 @@ interface StoredExtension {
 }
 
 const defaultProfileId = '__default__';
+const configurationSection = 'profileExtensionMatrix';
+const columnWidthsSetting = 'columnWidths';
 
 export function activate(context: vscode.ExtensionContext): void {
     const provider = new MatrixViewProvider();
@@ -77,6 +79,12 @@ class MatrixViewProvider implements vscode.WebviewViewProvider {
             ]
         };
         webviewView.webview.html = getWebviewHtml(webviewView.webview);
+        const configurationListener = vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration(`${configurationSection}.${columnWidthsSetting}`)) {
+                this.postColumnWidths();
+            }
+        });
+        webviewView.onDidDispose(() => configurationListener.dispose());
         webviewView.webview.onDidReceiveMessage(async (message: unknown) => {
             if (!isMessage(message)) {
                 return;
@@ -90,8 +98,14 @@ class MatrixViewProvider implements vscode.WebviewViewProvider {
             if (message.type === 'openExtension') {
                 await vscode.commands.executeCommand('extension.open', message.extensionId);
             }
-            if (message.type === 'ready' && this.lastMatrix) {
-                webviewView.webview.postMessage({ type: 'data', data: this.toWebviewMatrix(this.lastMatrix) });
+            if (message.type === 'ready') {
+                this.postColumnWidths();
+                if (this.lastMatrix) {
+                    webviewView.webview.postMessage({ type: 'data', data: this.toWebviewMatrix(this.lastMatrix) });
+                }
+            }
+            if (message.type === 'saveColumnWidths') {
+                await saveColumnWidths(message.widths);
             }
             if (message.type === 'switchProfile') {
                 await this.switchProfile();
@@ -107,6 +121,10 @@ class MatrixViewProvider implements vscode.WebviewViewProvider {
             return;
         }
         this.view.webview.postMessage({ type: 'data', data: this.toWebviewMatrix(data) });
+    }
+
+    private postColumnWidths(): void {
+        this.view?.webview.postMessage({ type: 'columnWidths', widths: readColumnWidths() });
     }
 
     private toWebviewMatrix(data: MatrixData): MatrixData {
@@ -161,6 +179,32 @@ class MatrixViewProvider implements vscode.WebviewViewProvider {
                 : vscode.l10n.t('Could not remove extension: {0}', detail));
         }
     }
+}
+
+type ColumnWidths = Record<string, number>;
+
+function readColumnWidths(): ColumnWidths {
+    const stored = vscode.workspace.getConfiguration(configurationSection).get<unknown>(columnWidthsSetting);
+    return isColumnWidths(stored) ? stored : {};
+}
+
+// The setting is application-scoped, so it is written to the user settings shared by all profiles.
+async function saveColumnWidths(widths: ColumnWidths): Promise<void> {
+    try {
+        await vscode.workspace.getConfiguration(configurationSection).update(
+            columnWidthsSetting,
+            Object.keys(widths).length ? widths : undefined,
+            vscode.ConfigurationTarget.Global
+        );
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(vscode.l10n.t('Could not save column widths: {0}', detail));
+    }
+}
+
+function isColumnWidths(value: unknown): value is ColumnWidths {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value) &&
+        Object.values(value as Record<string, unknown>).every((width) => typeof width === 'number' && Number.isFinite(width) && width > 0);
 }
 
 async function loadMatrix(): Promise<MatrixData> {
@@ -534,7 +578,7 @@ type ToggleMessage = {
     enabled: boolean;
 };
 
-function isMessage(value: unknown): value is ToggleMessage | { type: 'refresh' } | { type: 'ready' } | { type: 'openExtension'; extensionId: string } | { type: 'update'; extensionId: string } | { type: 'switchProfile'; profileName: string } {
+function isMessage(value: unknown): value is ToggleMessage | { type: 'refresh' } | { type: 'ready' } | { type: 'openExtension'; extensionId: string } | { type: 'update'; extensionId: string } | { type: 'switchProfile'; profileName: string } | { type: 'saveColumnWidths'; widths: ColumnWidths } {
     if (!value || typeof value !== 'object' || !('type' in value)) {
         return false;
     }
@@ -543,6 +587,8 @@ function isMessage(value: unknown): value is ToggleMessage | { type: 'refresh' }
         message.type === 'openExtension' && typeof message.extensionId === 'string'
     ) || (
             message.type === 'switchProfile' && typeof message.profileName === 'string'
+        ) || (
+            message.type === 'saveColumnWidths' && isColumnWidths(message.widths)
         ) || (
             message.type === 'toggle' &&
             typeof message.profileId === 'string' &&
@@ -562,7 +608,8 @@ function getWebviewHtml(webview: vscode.Webview): string {
         updateAvailable: vscode.l10n.t('Update available'),
         deprecatedTitle: vscode.l10n.t('This extension is deprecated'),
         deprecated: vscode.l10n.t('Deprecated'),
-        extensionColumn: vscode.l10n.t('Extension')
+        extensionColumn: vscode.l10n.t('Extension'),
+        resizeColumn: vscode.l10n.t('Drag to resize the column. Double-click to reset all column widths.')
     };
     // Escape "<" so the embedded JSON can never close the surrounding <script> element.
     const stringsJson = JSON.stringify(strings).replace(/</g, '\\u003c');
@@ -589,6 +636,9 @@ function getWebviewHtml(webview: vscode.Webview): string {
     th { position: sticky; top: 0; background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground); z-index: 1; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
     th:first-child, td:first-child { position: sticky; left: 0; background: var(--vscode-editor-background); width: min(42vw, 300px); min-width: 55px; z-index: 2; }
     th:first-child { z-index: 3; }
+    .resizer { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; touch-action: none; user-select: none; z-index: 4; }
+    .resizer:hover, .resizer.active { background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder)); }
+    body.resizing { cursor: col-resize; user-select: none; }
     th:not(:first-child) { text-align: center; }
     td:not(:first-child) { text-align: center; }
     .cell { background: rgba(255, 255, 255, 0.04); color: var(--vscode-foreground); display: inline-flex; align-items: center; justify-content: center; min-width: 30px; min-height: 24px; padding: 3px 7px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; font-weight: 700; }
@@ -617,12 +667,20 @@ function getWebviewHtml(webview: vscode.Webview): string {
     const vscode = acquireVsCodeApi();
     const strings = ${stringsJson};
     let matrix = { profiles: [], extensions: [] };
+    let columnWidths = {};
+    let resizing = false;
+    const extensionColumnKey = '__extension__';
+    const defaultExtensionColumnWidth = 300;
+    const defaultProfileColumnWidth = 66;
+    const minimumExtensionColumnWidth = 55;
+    const minimumProfileColumnWidth = 40;
     const content = document.getElementById('content');
     const search = document.getElementById('search');
     document.getElementById('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
     search.addEventListener('input', render);
     window.addEventListener('message', (event) => {
       if (event.data.type === 'data') { matrix = event.data.data; render(); }
+      if (event.data.type === 'columnWidths' && !resizing) { columnWidths = event.data.widths || {}; applyColumnWidths(); }
     });
     vscode.postMessage({ type: 'ready' });
     function escapeHtml(value) {
@@ -633,8 +691,9 @@ function getWebviewHtml(webview: vscode.Webview): string {
       if (!matrix.profiles.length) { content.innerHTML = '<p class="message">' + escapeHtml(strings.noProfiles) + '</p>'; return; }
       const query = search.value.trim().toLowerCase();
     const extensions = matrix.extensions.filter((extension) => (extension.id + ' ' + extension.displayName).toLowerCase().includes(query));
+    const resizer = (key) => '<div class="resizer" title="' + escapeHtml(strings.resizeColumn) + '" data-column-key="' + escapeHtml(key) + '"></div>';
     const columns = '<col style="width: 70px; min-width: 55px">' + matrix.profiles.map(() => '<col style="width: 66px; min-width: 66px">').join('');
-    const header = matrix.profiles.map((profile) => '<th title="' + escapeHtml(profile.name) + '"><button class="profile-header" data-switch-profile="' + escapeHtml(profile.name) + '">' + escapeHtml(profile.name) + '</button></th>').join('');
+    const header = matrix.profiles.map((profile) => '<th title="' + escapeHtml(profile.name) + '" data-column-key="' + escapeHtml(profile.id) + '"><button class="profile-header" data-switch-profile="' + escapeHtml(profile.name) + '">' + escapeHtml(profile.name) + '</button>' + resizer(profile.id) + '</th>').join('');
       const rows = extensions.map((extension) => {
         const cells = matrix.profiles.map((profile) => {
           const enabled = extension.profileIds.includes(profile.id);
@@ -662,7 +721,7 @@ function getWebviewHtml(webview: vscode.Webview): string {
         const nameClass = extension.deprecated ? 'extension-link deprecated' : 'extension-link';
         return '<tr><td title="' + escapeHtml(extension.id) + '"><div class="extension-row">' + icon + '<div class="extension-details"><button class="' + nameClass + '" data-open-extension="' + escapeHtml(extension.id) + '">' + escapeHtml(extension.displayName) + '</button>' + deprecatedBadge + description + '<span class="extension-meta">' + meta + updateBadge + '</span></div></div></td>' + cells + '</tr>';
       }).join('');
-                        content.innerHTML = '<div class="matrix"><table><colgroup>' + columns + '</colgroup><thead><tr><th>' + escapeHtml(strings.extensionColumn) + '</th>' + header + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+                        content.innerHTML = '<div class="matrix"><table><colgroup>' + columns + '</colgroup><thead><tr><th data-column-key="' + extensionColumnKey + '">' + escapeHtml(strings.extensionColumn) + resizer(extensionColumnKey) + '</th>' + header + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
             content.querySelectorAll('[data-switch-profile]').forEach((button) => button.addEventListener('click', () => {
                 vscode.postMessage({ type: 'switchProfile', profileName: button.dataset.switchProfile });
             }));
@@ -671,6 +730,76 @@ function getWebviewHtml(webview: vscode.Webview): string {
         if (profile) vscode.postMessage({ type: 'toggle', profileId: profile.id, profileName: profile.cliName, extensionId: button.dataset.extensionId, enabled: button.dataset.enabled === 'true' });
       }));
     content.querySelectorAll('[data-open-extension]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: 'openExtension', extensionId: button.dataset.openExtension })));
+      content.querySelectorAll('.resizer').forEach(attachResizer);
+      applyColumnWidths();
+    }
+    function defaultColumnWidth(key) {
+      return key === extensionColumnKey ? defaultExtensionColumnWidth : defaultProfileColumnWidth;
+    }
+    function minimumColumnWidth(key) {
+      return key === extensionColumnKey ? minimumExtensionColumnWidth : minimumProfileColumnWidth;
+    }
+    // Without saved widths the table keeps its responsive layout; once any width is saved every column gets an explicit width.
+    function applyColumnWidths() {
+      const table = content.querySelector('table');
+      if (!table) return;
+      const headers = [...table.querySelectorAll('thead th')];
+      const cols = [...table.querySelectorAll('col')];
+      const customized = Object.keys(columnWidths).length > 0;
+      let total = 0;
+      headers.forEach((header, index) => {
+        const width = customized ? (columnWidths[header.dataset.columnKey] ?? defaultColumnWidth(header.dataset.columnKey)) : undefined;
+        header.style.width = width ? width + 'px' : '';
+        header.style.minWidth = width ? width + 'px' : '';
+        if (cols[index]) {
+          cols[index].style.width = width ? width + 'px' : (index === 0 ? '70px' : '66px');
+          cols[index].style.minWidth = width ? width + 'px' : (index === 0 ? '55px' : '66px');
+        }
+        total += width ?? 0;
+      });
+      table.style.width = customized ? total + 'px' : '';
+      table.style.minWidth = customized ? '0' : '';
+    }
+    function attachResizer(handle) {
+      handle.addEventListener('click', (event) => event.stopPropagation());
+      handle.addEventListener('dblclick', (event) => {
+        event.stopPropagation();
+        columnWidths = {};
+        applyColumnWidths();
+        vscode.postMessage({ type: 'saveColumnWidths', widths: {} });
+      });
+      handle.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const key = handle.dataset.columnKey;
+        // Freeze the current layout so resizing one column does not make the others jump.
+        content.querySelectorAll('thead th').forEach((header) => {
+          const headerKey = header.dataset.columnKey;
+          if (columnWidths[headerKey] === undefined) columnWidths[headerKey] = Math.round(header.getBoundingClientRect().width);
+        });
+        const startX = event.clientX;
+        const startWidth = columnWidths[key];
+        resizing = true;
+        handle.classList.add('active');
+        document.body.classList.add('resizing');
+        handle.setPointerCapture(event.pointerId);
+        const onMove = (moveEvent) => {
+          columnWidths[key] = Math.max(minimumColumnWidth(key), Math.round(startWidth + moveEvent.clientX - startX));
+          applyColumnWidths();
+        };
+        const onUp = () => {
+          handle.removeEventListener('pointermove', onMove);
+          handle.removeEventListener('pointerup', onUp);
+          handle.removeEventListener('pointercancel', onUp);
+          resizing = false;
+          handle.classList.remove('active');
+          document.body.classList.remove('resizing');
+          vscode.postMessage({ type: 'saveColumnWidths', widths: columnWidths });
+        };
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
+        handle.addEventListener('pointercancel', onUp);
+      });
     }
   </script>
 </body>

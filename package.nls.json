@@ -4,5 +4,6 @@
     "command.open.title": "Profile Extension Matrix: Open",
     "command.refresh.title": "Profile Extension Matrix: Refresh",
     "viewsContainer.title": "Profile Extensions",
-    "view.matrix.name": "Extension Matrix"
+    "view.matrix.name": "Extension Matrix",
+    "config.columnWidths.description": "Column widths of the extension matrix in pixels, keyed by profile ID (`__extension__` is the extension column). Shared by all profiles. Drag a column edge to change a width; double-click it to reset all widths."
 }
