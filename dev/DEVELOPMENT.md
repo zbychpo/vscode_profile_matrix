@@ -32,11 +32,10 @@ npm run watch
 
 ## VSIX パッケージの作成
 
-パッケージ作成前に、コンパイル済みの `out/extension.js` が最新であることを確認します。
+`npm run package` は `vsce` を `npx` 経由で実行します。`vscode:prepublish` により、パッケージ作成前に自動でコンパイルされます。
 
 ```powershell
-npm run compile
-npx vsce package --allow-missing-repository --skip-license
+npm run package
 ```
 
 コマンド完了後、プロジェクトルートに `profile-extension-matrix-<version>.vsix` が生成されます。`<version>` は `package.json` の `version` に対応します。
@@ -56,8 +55,7 @@ npx vsce publish
 
 ```powershell
 npm version patch
-npm run compile
-npx vsce package --allow-missing-repository --skip-license
+npm run package
 ```
 
 発行トークンはターミナルの入力プロンプトでのみ入力し、ソースコード、設定ファイル、シェル履歴に保存しないでください。
