@@ -623,18 +623,19 @@ function getWebviewHtml(webview: vscode.Webview): string {
   <title>Profile Extension Matrix</title>
   <style>
     :root { color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: 13px; background: var(--vscode-editor-background); }
-    body { margin: 0; padding: 12px; background: var(--vscode-editor-background); color: var(--vscode-foreground); }
+    body { margin: 0; padding: 12px; background: var(--vscode-editor-background); color: var(--vscode-foreground); box-sizing: border-box; display: flex; flex-direction: column; height: 100vh; }
+    #content { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
     .toolbar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
     .profile-header { background: transparent; color: var(--vscode-foreground); display: block; padding: 0; text-align: center; width: 100%; font-weight: 600; }
     .profile-header:hover { background: transparent; color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
     input { flex: 1; min-width: 0; min-height: 30px; padding: 6px 10px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); border-radius: 4px; font-size: 13px; }
     button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
     button:hover { background: var(--vscode-button-hoverBackground); }
-    .matrix { overflow: auto; border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: var(--vscode-editor-background); max-width: 100%; }
-    table { border-collapse: collapse; table-layout: fixed; width: 100%; min-width: 155px; font-size: 12px; color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); }
+    .matrix { overflow: auto; border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: var(--vscode-editor-background); max-width: 100%; min-height: 0; }
+    table { border-collapse: collapse; table-layout: fixed; font-size: 12px; color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); }
     th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 7px 8px; text-align: left; color: var(--vscode-foreground); background: var(--vscode-editor-background); overflow: hidden; }
     th { position: sticky; top: 0; background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground); z-index: 1; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
-    th:first-child, td:first-child { position: sticky; left: 0; background: var(--vscode-editor-background); width: min(42vw, 300px); min-width: 55px; z-index: 2; }
+    th:first-child, td:first-child { position: sticky; left: 0; background: var(--vscode-editor-background); box-shadow: inset -1px 0 0 var(--vscode-panel-border); z-index: 2; }
     th:first-child { z-index: 3; }
     .resizer { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; touch-action: none; user-select: none; z-index: 4; }
     .resizer:hover, .resizer.active { background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder)); }
@@ -678,6 +679,7 @@ function getWebviewHtml(webview: vscode.Webview): string {
     const search = document.getElementById('search');
     document.getElementById('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
     search.addEventListener('input', render);
+    window.addEventListener('resize', () => { if (!resizing) applyColumnWidths(); });
     window.addEventListener('message', (event) => {
       if (event.data.type === 'data') { matrix = event.data.data; render(); }
       if (event.data.type === 'columnWidths' && !resizing) { columnWidths = event.data.widths || {}; applyColumnWidths(); }
@@ -687,12 +689,13 @@ function getWebviewHtml(webview: vscode.Webview): string {
       return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
     }
     function render() {
+      content.classList.remove('message');
       if (matrix.error) { content.innerHTML = '<p class="message error">' + escapeHtml(matrix.error) + '</p>'; return; }
       if (!matrix.profiles.length) { content.innerHTML = '<p class="message">' + escapeHtml(strings.noProfiles) + '</p>'; return; }
       const query = search.value.trim().toLowerCase();
     const extensions = matrix.extensions.filter((extension) => (extension.id + ' ' + extension.displayName).toLowerCase().includes(query));
     const resizer = (key) => '<div class="resizer" title="' + escapeHtml(strings.resizeColumn) + '" data-column-key="' + escapeHtml(key) + '"></div>';
-    const columns = '<col style="width: 70px; min-width: 55px">' + matrix.profiles.map(() => '<col style="width: 66px; min-width: 66px">').join('');
+    const columns = '<col>' + matrix.profiles.map(() => '<col>').join('');
     const header = matrix.profiles.map((profile) => '<th title="' + escapeHtml(profile.name) + '" data-column-key="' + escapeHtml(profile.id) + '"><button class="profile-header" data-switch-profile="' + escapeHtml(profile.name) + '">' + escapeHtml(profile.name) + '</button>' + resizer(profile.id) + '</th>').join('');
       const rows = extensions.map((extension) => {
         const cells = matrix.profiles.map((profile) => {
@@ -734,12 +737,15 @@ function getWebviewHtml(webview: vscode.Webview): string {
       applyColumnWidths();
     }
     function defaultColumnWidth(key) {
-      return key === extensionColumnKey ? defaultExtensionColumnWidth : defaultProfileColumnWidth;
+      return key === extensionColumnKey
+        ? Math.round(Math.min(defaultExtensionColumnWidth, Math.max(minimumExtensionColumnWidth, window.innerWidth * 0.42)))
+        : defaultProfileColumnWidth;
     }
     function minimumColumnWidth(key) {
       return key === extensionColumnKey ? minimumExtensionColumnWidth : minimumProfileColumnWidth;
     }
-    // Without saved widths the table keeps its responsive layout; once any width is saved every column gets an explicit width.
+    // Every column gets an explicit width and the table is as wide as their sum, so it scrolls horizontally instead of squeezing columns.
+    // Without saved widths the table still stretches to fill the view.
     function applyColumnWidths() {
       const table = content.querySelector('table');
       if (!table) return;
@@ -748,17 +754,17 @@ function getWebviewHtml(webview: vscode.Webview): string {
       const customized = Object.keys(columnWidths).length > 0;
       let total = 0;
       headers.forEach((header, index) => {
-        const width = customized ? (columnWidths[header.dataset.columnKey] ?? defaultColumnWidth(header.dataset.columnKey)) : undefined;
-        header.style.width = width ? width + 'px' : '';
-        header.style.minWidth = width ? width + 'px' : '';
+        const width = columnWidths[header.dataset.columnKey] ?? defaultColumnWidth(header.dataset.columnKey);
+        header.style.width = width + 'px';
+        header.style.minWidth = width + 'px';
         if (cols[index]) {
-          cols[index].style.width = width ? width + 'px' : (index === 0 ? '70px' : '66px');
-          cols[index].style.minWidth = width ? width + 'px' : (index === 0 ? '55px' : '66px');
+          cols[index].style.width = width + 'px';
+          cols[index].style.minWidth = width + 'px';
         }
-        total += width ?? 0;
+        total += width;
       });
-      table.style.width = customized ? total + 'px' : '';
-      table.style.minWidth = customized ? '0' : '';
+      table.style.width = total + 'px';
+      table.style.minWidth = customized ? '0' : '100%';
     }
     function attachResizer(handle) {
       handle.addEventListener('click', (event) => event.stopPropagation());
