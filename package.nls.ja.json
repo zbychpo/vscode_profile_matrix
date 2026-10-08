@@ -1,0 +1,8 @@
+{
+    "displayName": "Profile Extension Matrix",
+    "description": "ローカルの VS Code プロファイル間で拡張機能を表示・管理します。",
+    "command.open.title": "Profile Extension Matrix: 開く",
+    "command.refresh.title": "Profile Extension Matrix: 更新",
+    "viewsContainer.title": "プロファイル拡張機能",
+    "view.matrix.name": "拡張機能マトリックス"
+}

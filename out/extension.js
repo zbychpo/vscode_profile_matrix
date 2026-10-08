@@ -39,7 +39,6 @@ const node_fs_1 = require("node:fs");
 const path = __importStar(require("node:path"));
 const vscode = __importStar(require("vscode"));
 const defaultProfileId = '__default__';
-const defaultProfileName = '既定';
 function activate(context) {
     const provider = new MatrixViewProvider();
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(MatrixViewProvider.viewType, provider), vscode.commands.registerCommand('profileExtensionMatrix.open', () => vscode.commands.executeCommand('workbench.view.extension.profileExtensionMatrix')), vscode.commands.registerCommand('profileExtensionMatrix.refresh', () => provider.refresh()));
@@ -110,23 +109,29 @@ class MatrixViewProvider {
         }
         catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(`プロファイルを切り替えられませんでした: ${detail}`);
+            vscode.window.showErrorMessage(vscode.l10n.t('Could not switch profile: {0}', detail));
         }
     }
     async toggleExtension(message) {
-        const verb = message.enabled ? '追加' : '削除';
-        const confirmation = await vscode.window.showWarningMessage(`「${message.extensionId}」をプロファイル「${message.profileName}」に${verb}しますか？`, { modal: true }, verb);
-        if (confirmation !== verb) {
+        const action = message.enabled ? vscode.l10n.t('Add') : vscode.l10n.t('Remove');
+        const confirmation = await vscode.window.showWarningMessage(message.enabled
+            ? vscode.l10n.t('Add "{0}" to profile "{1}"?', message.extensionId, message.profileName)
+            : vscode.l10n.t('Remove "{0}" from profile "{1}"?', message.extensionId, message.profileName), { modal: true }, action);
+        if (confirmation !== action) {
             return;
         }
         try {
             await runCodeCli(message.profileName, message.extensionId, message.enabled);
-            vscode.window.showInformationMessage(`「${message.extensionId}」を${verb}しました。`);
+            vscode.window.showInformationMessage(message.enabled
+                ? vscode.l10n.t('Added "{0}".', message.extensionId)
+                : vscode.l10n.t('Removed "{0}".', message.extensionId));
             await this.refresh();
         }
         catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(`拡張機能を${verb}できませんでした: ${detail}`);
+            vscode.window.showErrorMessage(message.enabled
+                ? vscode.l10n.t('Could not add extension: {0}', detail)
+                : vscode.l10n.t('Could not remove extension: {0}', detail));
         }
     }
 }
@@ -145,7 +150,7 @@ async function loadMatrix() {
         })));
         const defaultProfile = {
             id: defaultProfileId,
-            name: defaultProfileName,
+            name: vscode.l10n.t('Default'),
             cliName: 'Default',
             extensions: await readDefaultExtensions()
         };
@@ -169,12 +174,12 @@ async function loadMatrix() {
         await applyUpdateInfo(extensionList);
         return {
             profiles: profiles.map(({ id, name, cliName }) => ({ id, name, cliName })).sort((left, right) => left.name.localeCompare(right.name)),
-            extensions: extensionList.sort((left, right) => left.displayName.localeCompare(right.displayName, 'ja'))
+            extensions: extensionList.sort((left, right) => left.displayName.localeCompare(right.displayName, vscode.env.language))
         };
     }
     catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        return { profiles: [], extensions: [], error: `プロファイル情報を読み取れませんでした: ${detail}` };
+        return { profiles: [], extensions: [], error: vscode.l10n.t('Could not read profile information: {0}', detail) };
     }
 }
 async function applyUpdateInfo(extensions) {
@@ -252,7 +257,7 @@ async function fetchDeprecatedIds() {
 function getProfilesDirectory() {
     if (process.platform === 'win32') {
         if (!process.env.APPDATA) {
-            throw new Error('APPDATA 環境変数がありません。');
+            throw new Error(vscode.l10n.t('The APPDATA environment variable is not set.'));
         }
         return path.join(process.env.APPDATA, 'Code', 'User', 'profiles');
     }
@@ -466,9 +471,21 @@ function isMessage(value) {
 }
 function getWebviewHtml(webview) {
     const nonce = createNonce();
+    const strings = {
+        noProfiles: vscode.l10n.t('No custom profiles found.'),
+        removeFromProfile: vscode.l10n.t('Remove from this profile'),
+        addToProfile: vscode.l10n.t('Add to this profile'),
+        updateAvailableTitle: vscode.l10n.t('An update is available'),
+        updateAvailable: vscode.l10n.t('Update available'),
+        deprecatedTitle: vscode.l10n.t('This extension is deprecated'),
+        deprecated: vscode.l10n.t('Deprecated'),
+        extensionColumn: vscode.l10n.t('Extension')
+    };
+    // Escape "<" so the embedded JSON can never close the surrounding <script> element.
+    const stringsJson = JSON.stringify(strings).replace(/</g, '\\u003c');
     const csp = `default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
     return `<!DOCTYPE html>
-<html lang="ja">
+<html lang="${escapeAttribute(vscode.env.language)}">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -511,10 +528,11 @@ function getWebviewHtml(webview) {
   </style>
 </head>
 <body>
-  <div class="toolbar"><input id="search" type="search" placeholder="拡張機能を検索"><button id="refresh" title="更新">更新</button></div>
-  <div id="content" class="message">読み込み中...</div>
+  <div class="toolbar"><input id="search" type="search" placeholder="${escapeAttribute(vscode.l10n.t('Search extensions'))}"><button id="refresh" title="${escapeAttribute(vscode.l10n.t('Refresh'))}">${escapeAttribute(vscode.l10n.t('Refresh'))}</button></div>
+  <div id="content" class="message">${escapeAttribute(vscode.l10n.t('Loading...'))}</div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    const strings = ${stringsJson};
     let matrix = { profiles: [], extensions: [] };
     const content = document.getElementById('content');
     const search = document.getElementById('search');
@@ -529,7 +547,7 @@ function getWebviewHtml(webview) {
     }
     function render() {
       if (matrix.error) { content.innerHTML = '<p class="message error">' + escapeHtml(matrix.error) + '</p>'; return; }
-      if (!matrix.profiles.length) { content.innerHTML = '<p class="message">カスタムプロファイルが見つかりません。</p>'; return; }
+      if (!matrix.profiles.length) { content.innerHTML = '<p class="message">' + escapeHtml(strings.noProfiles) + '</p>'; return; }
       const query = search.value.trim().toLowerCase();
     const extensions = matrix.extensions.filter((extension) => (extension.id + ' ' + extension.displayName).toLowerCase().includes(query));
     const columns = '<col style="width: 70px; min-width: 55px">' + matrix.profiles.map(() => '<col style="width: 66px; min-width: 66px">').join('');
@@ -538,7 +556,7 @@ function getWebviewHtml(webview) {
         const cells = matrix.profiles.map((profile) => {
           const enabled = extension.profileIds.includes(profile.id);
           const label = enabled ? '✓' : '+';
-          const title = enabled ? 'このプロファイルから削除' : 'このプロファイルへ追加';
+          const title = escapeHtml(enabled ? strings.removeFromProfile : strings.addToProfile);
           return '<td><button class="cell ' + (enabled ? 'enabled' : '') + '" title="' + title + '" data-profile-id="' + escapeHtml(profile.id) + '" data-extension-id="' + escapeHtml(extension.id) + '" data-enabled="' + (!enabled) + '">' + label + '</button></td>';
         }).join('');
         const icon = extension.iconUri
@@ -554,14 +572,14 @@ function getWebviewHtml(webview) {
               : 'v' + escapeHtml(extension.version))
           : '';
                 const updateBadge = extension.hasUpdate
-                    ? '<span class="update-badge" title="更新があります">更新あり</span>'
+                    ? '<span class="update-badge" title="' + escapeHtml(strings.updateAvailableTitle) + '">' + escapeHtml(strings.updateAvailable) + '</span>'
           : '';
-        const deprecatedBadge = extension.deprecated ? '<span class="deprecated-badge" title="この拡張機能は非推奨です">非推奨</span>' : '';
+        const deprecatedBadge = extension.deprecated ? '<span class="deprecated-badge" title="' + escapeHtml(strings.deprecatedTitle) + '">' + escapeHtml(strings.deprecated) + '</span>' : '';
         const meta = [publisher, versionText].filter(Boolean).join(' \u00b7 ');
         const nameClass = extension.deprecated ? 'extension-link deprecated' : 'extension-link';
         return '<tr><td title="' + escapeHtml(extension.id) + '"><div class="extension-row">' + icon + '<div class="extension-details"><button class="' + nameClass + '" data-open-extension="' + escapeHtml(extension.id) + '">' + escapeHtml(extension.displayName) + '</button>' + deprecatedBadge + description + '<span class="extension-meta">' + meta + updateBadge + '</span></div></div></td>' + cells + '</tr>';
       }).join('');
-                        content.innerHTML = '<div class="matrix"><table><colgroup>' + columns + '</colgroup><thead><tr><th>Extension</th>' + header + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+                        content.innerHTML = '<div class="matrix"><table><colgroup>' + columns + '</colgroup><thead><tr><th>' + escapeHtml(strings.extensionColumn) + '</th>' + header + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
             content.querySelectorAll('[data-switch-profile]').forEach((button) => button.addEventListener('click', () => {
                 vscode.postMessage({ type: 'switchProfile', profileName: button.dataset.switchProfile });
             }));
@@ -574,6 +592,9 @@ function getWebviewHtml(webview) {
   </script>
 </body>
 </html>`;
+}
+function escapeAttribute(value) {
+    return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character] ?? character);
 }
 function createNonce() {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';

@@ -1,0 +1,8 @@
+{
+    "displayName": "Profile Extension Matrix",
+    "description": "View and manage extensions across local VS Code profiles.",
+    "command.open.title": "Profile Extension Matrix: Open",
+    "command.refresh.title": "Profile Extension Matrix: Refresh",
+    "viewsContainer.title": "Profile Extensions",
+    "view.matrix.name": "Extension Matrix"
+}
